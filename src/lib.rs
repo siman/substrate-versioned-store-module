@@ -18,6 +18,7 @@ use rstd::prelude::*;
 use parity_codec_derive::{Decode, Encode};
 use srml_support::{decl_event, decl_module, decl_storage, dispatch, ensure, StorageValue, StorageMap};
 use system;
+use system::{ensure_signed};
 
 mod mock;
 mod tests;
@@ -304,7 +305,69 @@ decl_event!(
 
 decl_module! {
     pub struct Module<T: Trait> for enum Call where origin: T::Origin {
+
         fn deposit_event<T>() = default;
+
+        fn test_create_class(
+            origin,
+            name: Vec<u8>,
+            description: Vec<u8>
+        ) -> dispatch::Result {
+            let _ = ensure_signed(origin)?;
+            let _ = Self::create_class(name, description);
+            Ok(())
+        }
+
+        fn test_add_class_schema(
+            origin,
+            class_id: ClassId,
+            existing_properties: Vec<u16>,
+            new_properties: Vec<Property>
+        ) -> dispatch::Result {
+            let _ = ensure_signed(origin)?;
+            let _ = Self::add_class_schema(class_id, existing_properties, new_properties);
+            Ok(())
+        }
+
+        fn test_create_entity(
+            origin,
+            class_id: ClassId
+        ) -> dispatch::Result {
+            let _ = ensure_signed(origin)?;
+            let _ = Self::create_entity(class_id);
+            Ok(())
+        }
+
+        fn test_add_schema_support_to_entity(
+            origin,
+            entity_id: EntityId,
+            schema_id: u16,
+            property_values: Vec<ClassPropertyValue>
+        ) -> dispatch::Result {
+            let _ = ensure_signed(origin)?;
+            let _ = Self::add_schema_support_to_entity(entity_id, schema_id, property_values);
+            Ok(())
+        }
+
+        fn test_update_entity_properties(
+            origin,
+            entity_id: EntityId,
+            new_property_values: Vec<ClassPropertyValue>
+        ) -> dispatch::Result {
+            let _ = ensure_signed(origin)?;
+            let _ = Self::update_entity_properties(entity_id, new_property_values);
+            Ok(())
+        }
+
+        fn test_remove_entity_properties(
+            origin,
+            entity_id: EntityId,
+            property_ids: Vec<u16>
+        ) -> dispatch::Result {
+            let _ = ensure_signed(origin)?;
+            let _ = Self::remove_entity_properties(entity_id, property_ids);
+            Ok(())
+        }
     }
 }
 
