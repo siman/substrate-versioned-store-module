@@ -49,13 +49,10 @@ const ERROR_NO_PROPS_IN_CLASS_SCHEMA: &str = "Cannot add a class schema with an 
 const ERROR_ENTITY_NOT_FOUND: &str = "Entity was not found by id";
 // const ERROR_ENTITY_ALREADY_DELETED: &str = "Entity is already deleted";
 const ERROR_SCHEMA_ALREADY_ADDED_TO_ENTITY: &str = "Cannot add a schema that is already added to this entity";
-const ERROR_PROP_ID_NOT_FOUND_IN_SCHEMA_PROPS : &str = "Provided property id was not found in schema properties";
 const ERROR_PROP_VALUE_DONT_MATCH_TYPE: &str = "Some of the provided property values don't match the expected property type";
 const ERROR_PROP_NAME_NOT_UNIQUE_IN_CLASS: &str = "Property name is not unique within its class";
 const ERROR_MISSING_REQUIRED_PROP: &str = "Some required property was not found when adding schema support to entity";
-const ERROR_ENTITY_DOES_NOT_SUPPORT_SCHEMAS_YET: &str = "Cannot update entity properties because entity does not support any schemas yet";
 const ERROR_UNKNOWN_ENTITY_PROP_ID: &str = "Some of the provided property ids cannot be found on the current list of propery values of this entity";
-const ERROR_NO_ENTITY_PROP_IDS_ON_REMOVE: &str = "Cannot remove entity properties: an empty list of property ids provided";
 const ERROR_TEXT_PROP_IS_TOO_LONG: &str = "Text propery is too long";
 const ERROR_VEC_PROP_IS_TOO_LONG: &str = "Vector propery is too long";
 const ERROR_INTERNAL_RPOP_DOES_NOT_MATCH_ITS_CLASS: &str = "Internal property does not match its class";
@@ -110,7 +107,7 @@ pub type EntityId = u64;
 pub struct Class {
     id: ClassId,
 
-    /// All properties that has been used on this class across different class schemas.
+    /// All properties that have been used on this class across different class schemas.
     /// Unlikely to be more than roughly 20 properties per class, often less.
     /// For Person, think "height", "weight", etc.
     properties: Vec<Property>,
@@ -298,7 +295,7 @@ decl_event!(
         // EntityDeleted(EntityId),
         EntityNameUpdated(EntityId),
         EntityPropertiesUpdated(EntityId),
-        EntitySchemaAdded(EntityId),
+        EntitySchemaAdded(EntityId, u16),
 
         /// This is a fake event that uses AccountId type just to make Rust compiler happy to compile this module.
         FixCompilation(AccountId),
@@ -522,92 +519,80 @@ impl<T: Trait> Module<T> {
 
         let (entity, class) = Self::get_entity_and_class(entity_id);
 
-        // Check that schema id is not yet added to this entity:
-        let schema_not_added = entity.in_class_schema_indexes.iter().position(|x| *x == schema_id).is_none();
-        ensure!(schema_not_added, ERROR_SCHEMA_ALREADY_ADDED_TO_ENTITY);
-
         // Check that schema_id is a valid index of class schemas vector:
         let known_schema_id = schema_id < class.schemas.len() as u16;
         ensure!(known_schema_id, ERROR_UNKNOWN_CLASS_SCHEMA_ID);
 
+        // Check that schema id is not yet added to this entity:
+        let schema_not_added = entity.in_class_schema_indexes.iter().position(|x| *x == schema_id).is_none();
+        ensure!(schema_not_added, ERROR_SCHEMA_ALREADY_ADDED_TO_ENTITY);
+
         let class_schema_opt = class.schemas.get(schema_id as usize);
         let schema_prop_ids = class_schema_opt.unwrap().properties.clone();
 
-        let mut updated_values = entity.values;
-        let mut new_values: Vec<ClassPropertyValue> = vec![];
+        let current_entity_values = entity.values.clone();
+        let mut appended_entity_values = entity.values;
 
-        // Iterate over provided property values and replace existing values
-        // for these properties on this entity.
-        for prop_value in property_values.iter() {
-            let ClassPropertyValue {
-                in_class_index: new_id,
-                value: new_value
-            } = prop_value;
+        for &prop_id in schema_prop_ids.iter() {
 
-            if schema_prop_ids.get(*new_id as usize).is_none() {
-                return Err(ERROR_PROP_ID_NOT_FOUND_IN_SCHEMA_PROPS)
+            let prop_already_added = current_entity_values.iter()
+                .any(|prop| prop.in_class_index == prop_id);
+
+            if prop_already_added {
+                // A property is already added to the entity and cannot be updated
+                // while adding a schema support to this entity.
+                continue;
             }
 
-            let class_prop = class.properties.get(*new_id as usize).unwrap();
+            let class_prop = class.properties.get(prop_id as usize).unwrap();
 
-            Self::ensure_property_value_is_valid(new_value.clone(), class_prop.clone())?;
+            // If a value was not povided for the property of this schema:
+            match property_values.iter().find(|prop| prop.in_class_index == prop_id) {
+                Some(new_prop) => {
+                    let ClassPropertyValue {
+                        in_class_index: new_id,
+                        value: new_value
+                    } = new_prop;
 
-            let mut prop_updated = false;
-            for cur_prop_value in updated_values.iter_mut() {
-                let ClassPropertyValue {
-                    in_class_index: cur_id,
-                    value: cur_value
-                } = cur_prop_value;
+                    Self::ensure_property_value_is_valid(new_value.clone(), class_prop.clone())?;
 
-                if new_id == cur_id {
-                    *cur_value = new_value.clone();
-                    prop_updated = true;
-                }
-            }
-
-            if !prop_updated {
-                let updated_prop_value = ClassPropertyValue {
-                    in_class_index: *new_id,
-                    value: new_value.clone()
-                };
-                new_values.push(updated_prop_value);
-            }
-        }
-
-        updated_values.append(&mut new_values);
-
-        let mut updated_values_with_nones = updated_values.clone();
-        for &id in schema_prop_ids.iter() {
-    
-            // If value was not povided for schema prop:
-            if updated_values.iter().find(|prop| prop.in_class_index == id).is_none() {
-                
-                let class_prop = class.properties.get(id as usize).unwrap();
-
-                // Check that all required prop values are provided
-                if class_prop.required {
-                    return Err(ERROR_MISSING_REQUIRED_PROP)
-                } else {
+                    appended_entity_values.push(ClassPropertyValue {
+                        in_class_index: *new_id,
+                        value: new_value.clone()
+                    });
+                },
+                None => {
+                    // All required prop values should be are provided
+                    if class_prop.required {
+                        return Err(ERROR_MISSING_REQUIRED_PROP)
+                    }
                     // Add all missing non required schema prop values as PropertyValue::None
-                    let none_prop_value = ClassPropertyValue {
-                        in_class_index: id,
-                        value: PropertyValue::None
-                    };
-                    updated_values_with_nones.push(none_prop_value);
+                    else {
+                        appended_entity_values.push(ClassPropertyValue {
+                            in_class_index: prop_id,
+                            value: PropertyValue::None
+                        });
+                    }
                 }
             }
         }
 
         <EntityById<T>>::mutate(entity_id, |entity| {
+
+            // Add a new schema to the list of schemas supported by this entity.
             entity.in_class_schema_indexes.push(schema_id);
-            entity.values = updated_values_with_nones;
+
+            // Update entity values only if new properties have been added.
+            if appended_entity_values.len() > entity.values.len() {
+                entity.values = appended_entity_values;
+            }
         });
 
-        Self::deposit_event(RawEvent::EntitySchemaAdded(entity_id));
+        Self::deposit_event(RawEvent::EntitySchemaAdded(entity_id, schema_id));
         Ok(())
     }
 
-    pub fn update_entity_properties(
+    pub fn update_entity_property_values(
         entity_id: EntityId,
         new_property_values: Vec<ClassPropertyValue>
     ) -> dispatch::Result {
@@ -616,76 +601,56 @@ impl<T: Trait> Module<T> {
 
         let (entity, class) = Self::get_entity_and_class(entity_id);
 
-        ensure!(!entity.in_class_schema_indexes.is_empty(), ERROR_ENTITY_DOES_NOT_SUPPORT_SCHEMAS_YET);
-
+        // Get current property values of an entity as a mutable vector,
+        // so we can update them if new values provided present in new_property_values.
         let mut updated_values = entity.values;
+        let mut updates_count = 0;
 
+        // Iterate over a vector of new values and update corresponding properties
+        // of this entity if new values are valid.
         for new_prop_value in new_property_values.iter() {
+
             let ClassPropertyValue {
                 in_class_index: id,
                 value: new_value
             } = new_prop_value;
-            if let Some(prop) = updated_values.iter_mut().find(|prop| *id == prop.in_class_index) {
+
+            // Try to find a current property value in the entity
+            // by matching its id to the id of a property with an updated value.
+            if let Some(current_prop_value) = updated_values.iter_mut()
+                .find(|prop| *id == prop.in_class_index) {
+
                 let ClassPropertyValue {
                     in_class_index: valid_id,
                     value: current_value
-                } = prop;
+                } = current_prop_value;
+
+                // Get class-level information about this property
                 let class_prop = class.properties.get(*valid_id as usize).unwrap();
 
+                // Validate a new property value against the type of this property
+                // and check any additional constraints like the length of a vector
+                // if it's a vector property or the length of a text if it's a text property.
                 Self::ensure_property_value_is_valid(new_value.clone(), class_prop.clone())?;
 
+                // Update a current prop value in a mutable vector, if a new value is valid. 
                 *current_value = new_value.clone();
+                updates_count += 1;
             } else {
+                // Throw an error if a property was not found on entity
+                // by an in-class index of a property update.
                 return Err(ERROR_UNKNOWN_ENTITY_PROP_ID)
             }
         }
 
-        <EntityById<T>>::mutate(entity_id, |entity| {
-            entity.values = updated_values;
-        });
-
-        Self::deposit_event(RawEvent::EntityPropertiesUpdated(entity_id));
-        Ok(())
-    }
-    
-    /// Only non required property values can be removed.
-    /// In fact when removing a property value, it is replaced with PropertyValue::None.
-    pub fn remove_entity_properties(
-        entity_id: EntityId,
-        property_ids: Vec<u16>
-    ) -> dispatch::Result {
-
-        Self::ensure_known_entity_id(entity_id)?;
-
-        ensure!(!property_ids.is_empty(), ERROR_NO_ENTITY_PROP_IDS_ON_REMOVE);
-
-        let (entity, class) = Self::get_entity_and_class(entity_id);
-
-        let mut updates_count = 0;
-        let mut updated_values = entity.values;
-
-        property_ids.into_iter().for_each(|prop_id| {
-            if let Some(prop) = class.properties.get(prop_id as usize) {
-                // Only non required property values can be removed:
-                if !prop.required {
-                    for prop in updated_values.iter_mut() {
-                        if prop.in_class_index == prop_id {
-                            prop.value = PropertyValue::None;
-                            updates_count += 1;
-                            break
-                        }
-                    }
-                }
-            }
-        });
-
+        // If at least one of the entity property values should be update:
         if updates_count > 0 {
             <EntityById<T>>::mutate(entity_id, |entity| {
                 entity.values = updated_values;
             });
             Self::deposit_event(RawEvent::EntityPropertiesUpdated(entity_id));
         }
-        
+
         Ok(())
     }
 
@@ -855,7 +820,7 @@ impl<T: Trait> Module<T> {
         prop: Property,
     ) -> bool {
 
-        // Not required property can be None:
+        // A non required property can be updated to None:
         if !prop.required && value == PV::None {
             return true
         }
