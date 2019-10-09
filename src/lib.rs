@@ -348,23 +348,13 @@ decl_module! {
             Ok(())
         }
 
-        fn test_update_entity_properties(
+        fn test_update_entity_property_values(
             origin,
             entity_id: EntityId,
             new_property_values: Vec<ClassPropertyValue>
         ) -> dispatch::Result {
             let _ = ensure_signed(origin)?;
-            let _ = Self::update_entity_properties(entity_id, new_property_values);
-            Ok(())
-        }
-
-        fn test_remove_entity_properties(
-            origin,
-            entity_id: EntityId,
-            property_ids: Vec<u16>
-        ) -> dispatch::Result {
-            let _ = ensure_signed(origin)?;
-            let _ = Self::remove_entity_properties(entity_id, property_ids);
+            let _ = Self::update_entity_property_values(entity_id, new_property_values);
             Ok(())
         }
     }
