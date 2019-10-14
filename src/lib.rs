@@ -15,8 +15,8 @@
 use serde_derive::{Serialize, Deserialize};
 
 use rstd::prelude::*;
-use rstd::collections::btree_map::BTreeMap;
-use parity_codec_derive::{Decode, Encode};
+use rstd::collections::btree_set::BTreeSet;
+use codec::{Decode, Encode};
 use srml_support::{decl_event, decl_module, decl_storage, dispatch, ensure, StorageValue, StorageMap};
 use system;
 use system::{ensure_signed};
@@ -286,14 +286,10 @@ decl_event!(
         <T as system::Trait>::AccountId,
     {
         ClassCreated(ClassId),
-        ClassPropertyAdded(ClassId, u16),
-        ClassPropertyUpdated(ClassId, u16),
         ClassSchemaAdded(ClassId, u16),
 
         EntityCreated(EntityId),
-        EntityUpdated(EntityId),
         // EntityDeleted(EntityId),
-        EntityNameUpdated(EntityId),
         EntityPropertiesUpdated(EntityId),
         EntitySchemaAdded(EntityId, u16),
 
@@ -376,7 +372,7 @@ impl<T: Trait> Module<T> {
 
         Self::ensure_class_description_is_valid(&description)?;
 
-        let class_id = <NextClassId<T>>::get();
+        let class_id = NextClassId::get();
 
         let new_class = Class {
             id: class_id,
@@ -387,10 +383,10 @@ impl<T: Trait> Module<T> {
         };
 
         // Save newly created class:
-        <ClassById<T>>::insert(class_id, new_class);
+        ClassById::insert(class_id, new_class);
 
         // Increment the next class id:
-        <NextClassId<T>>::mutate(|n| *n += 1);
+        NextClassId::mutate(|n| *n += 1);
 
         Self::deposit_event(RawEvent::ClassCreated(class_id));
         Ok(class_id)
@@ -411,14 +407,14 @@ impl<T: Trait> Module<T> {
         
         ensure!(non_empty_schema, ERROR_NO_PROPS_IN_CLASS_SCHEMA);
 
-        let class = <ClassById<T>>::get(class_id);
+        let class = ClassById::get(class_id);
 
         // TODO Use BTreeSet for prop unique names when switched to Substrate 2.
         // There is no support for BTreeSet in Substrate 1 runtime.
         // use rstd::collections::btree_set::BTreeSet;
-        let mut unique_prop_names = BTreeMap::new();
+        let mut unique_prop_names = BTreeSet::new();
         for prop in class.properties.iter() {
-            unique_prop_names.insert(prop.name.clone(), true);
+            unique_prop_names.insert(prop.name.clone());
         }
 
         for prop in new_properties.iter() {
@@ -427,10 +423,10 @@ impl<T: Trait> Module<T> {
 
             // Check that the name of a new property is unique within its class.
             ensure!(
-                !unique_prop_names.contains_key(&prop.name),
+                !unique_prop_names.contains(&prop.name),
                 ERROR_PROP_NAME_NOT_UNIQUE_IN_CLASS
             );
-            unique_prop_names.insert(prop.name.clone(), true);
+            unique_prop_names.insert(prop.name.clone());
         }
 
         // Check that existing props are valid indices of class properties vector:
@@ -443,7 +439,7 @@ impl<T: Trait> Module<T> {
         let has_unknown_internal_id = new_properties.iter().any(|prop| {
             match prop.prop_type {
                 PropertyType::Internal(other_class_id) =>
-                    !<ClassById<T>>::exists(other_class_id),
+                    !ClassById::exists(other_class_id),
                 _ => false
             }
         });
@@ -464,7 +460,7 @@ impl<T: Trait> Module<T> {
             schema.properties.push(prop_id);
         });
 
-        <ClassById<T>>::mutate(class_id, |class| {
+        ClassById::mutate(class_id, |class| {
             class.properties = updated_class_props;
             class.schemas.push(schema);
         });
@@ -479,7 +475,7 @@ impl<T: Trait> Module<T> {
 
         Self::ensure_known_class_id(class_id)?;
 
-        let entity_id = <NextEntityId<T>>::get();
+        let entity_id = NextEntityId::get();
 
         let new_entity = Entity {
             id: entity_id,
@@ -490,10 +486,10 @@ impl<T: Trait> Module<T> {
         };
 
         // Save newly created entity:
-        <EntityById<T>>::insert(entity_id, new_entity);
+        EntityById::insert(entity_id, new_entity);
 
         // Increment the next entity id:
-        <NextEntityId<T>>::mutate(|n| *n += 1);
+        NextEntityId::mutate(|n| *n += 1);
 
         Self::deposit_event(RawEvent::EntityCreated(entity_id));
         Ok(entity_id)
@@ -567,7 +563,7 @@ impl<T: Trait> Module<T> {
             }
         }
 
-        <EntityById<T>>::mutate(entity_id, |entity| {
+        EntityById::mutate(entity_id, |entity| {
 
             // Add a new schema to the list of schemas supported by this entity.
             entity.in_class_schema_indexes.push(schema_id);
@@ -635,7 +631,7 @@ impl<T: Trait> Module<T> {
 
         // If at least one of the entity property values should be update:
         if updates_count > 0 {
-            <EntityById<T>>::mutate(entity_id, |entity| {
+            EntityById::mutate(entity_id, |entity| {
                 entity.values = updated_values;
             });
             Self::deposit_event(RawEvent::EntityPropertiesUpdated(entity_id));
@@ -648,10 +644,10 @@ impl<T: Trait> Module<T> {
     // pub fn delete_entity(entity_id: EntityId) -> dispatch::Result {
     //     Self::ensure_known_entity_id(entity_id)?;
 
-    //     let is_deleted = <EntityById<T>>::get(entity_id).deleted;
+    //     let is_deleted = EntityById::get(entity_id).deleted;
     //     ensure!(!is_deleted, ERROR_ENTITY_ALREADY_DELETED);
 
-    //     <EntityById<T>>::mutate(entity_id, |x| {
+    //     EntityById::mutate(entity_id, |x| {
     //         x.deleted = true;
     //     });
 
@@ -663,12 +659,12 @@ impl<T: Trait> Module<T> {
     // ----------------------------------------------------------------
 
     fn ensure_known_class_id(class_id: ClassId) -> dispatch::Result {
-        ensure!(<ClassById<T>>::exists(class_id), ERROR_CLASS_NOT_FOUND);
+        ensure!(ClassById::exists(class_id), ERROR_CLASS_NOT_FOUND);
         Ok(())
     }
 
     fn ensure_known_entity_id(entity_id: EntityId) -> dispatch::Result {
-        ensure!(<EntityById<T>>::exists(entity_id), ERROR_ENTITY_NOT_FOUND);
+        ensure!(EntityById::exists(entity_id), ERROR_ENTITY_NOT_FOUND);
         Ok(())
     }
 
@@ -690,15 +686,15 @@ impl<T: Trait> Module<T> {
 
     pub fn is_unknown_internal_entity_id(id: PropertyValue) -> bool {
         if let PropertyValue::Internal(entity_id) = id {
-            !<EntityById<T>>::exists(entity_id)
+            !EntityById::exists(entity_id)
         } else {
             false
         }
     }
 
     fn get_entity_and_class(entity_id: EntityId) -> (Entity, Class) {
-        let entity = <EntityById<T>>::get(entity_id);
-        let class = <ClassById<T>>::get(entity.class_id);
+        let entity = EntityById::get(entity_id);
+        let class = ClassById::get(entity.class_id);
         (entity, class)
     }
 
@@ -847,7 +843,7 @@ impl<T: Trait> Module<T> {
     }
 
     fn ensure_property_name_is_valid(text: &Vec<u8>) -> dispatch::Result {
-        <PropertyNameConstraint<T>>::get().ensure_valid(
+        PropertyNameConstraint::get().ensure_valid(
             text.len(),
             ERROR_PROPERTY_NAME_TOO_SHORT,
             ERROR_PROPERTY_NAME_TOO_LONG
@@ -855,7 +851,7 @@ impl<T: Trait> Module<T> {
     }
 
     fn ensure_property_description_is_valid(text: &Vec<u8>) -> dispatch::Result {
-        PropertyDescriptionConstraint::<T>::get().ensure_valid(
+        PropertyDescriptionConstraint::get().ensure_valid(
             text.len(),
             ERROR_PROPERTY_DESCRIPTION_TOO_SHORT,
             ERROR_PROPERTY_DESCRIPTION_TOO_LONG
@@ -863,7 +859,7 @@ impl<T: Trait> Module<T> {
     }
 
     fn ensure_class_name_is_valid(text: &Vec<u8>) -> dispatch::Result {
-        <ClassNameConstraint<T>>::get().ensure_valid(
+        ClassNameConstraint::get().ensure_valid(
             text.len(),
             ERROR_CLASS_NAME_TOO_SHORT,
             ERROR_CLASS_NAME_TOO_LONG
@@ -871,7 +867,7 @@ impl<T: Trait> Module<T> {
     }
 
     fn ensure_class_description_is_valid(text: &Vec<u8>) -> dispatch::Result {
-        ClassDescriptionConstraint::<T>::get().ensure_valid(
+        ClassDescriptionConstraint::get().ensure_valid(
             text.len(),
             ERROR_CLASS_DESCRIPTION_TOO_SHORT,
             ERROR_CLASS_DESCRIPTION_TOO_LONG
